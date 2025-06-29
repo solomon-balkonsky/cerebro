@@ -1,113 +1,108 @@
 #!/bin/bash
-
-# ⚠️ WARNING: This script assumes full control of /dev/nvme0n1
-# It will wipe the disk and set up Arch Linux with:
-# - ZFS root filesystem
-# - linux-zen kernel
-# - EFISTUB boot (no GRUB)
-# - Ly display manager
-# - GNOME desktop environment
-# - NVIDIA drivers (dkms)
-# - PipeWire audio stack
-# - User 'j' with ZSH shell
-# - Paru AUR helper via rustup (needed for ZFS installation)
-
 set -euo pipefail
 
-# === Variables ===
-disk=/dev/nvme0n1
-part1="${disk}p1"
-part2="${disk}p2"
+# === CONFIG ===
+DISK="/dev/nvme0n1"
+EFI="${DISK}p1"
+ROOT="${DISK}p2"
+SWAP="${DISK}p3"
+HOSTNAME="cerebro"
+USERNAME="j"
+USERPASS="arch"
+ROOTPASS="root"
+EFILABEL="Cerebro Zen"
 
-# === 1. Set up clock ===
-echo "🔧 Enabling NTP"
-timedatectl set-ntp true
+# === WIPE & PARTITION ===
+sgdisk -Z $DISK
+sgdisk -n 1:0:+1981MiB -t 1:ef00 $DISK  # EFI
+sgdisk -n 2:0:+64GiB   -t 2:bf00 $DISK  # ZFS
+sgdisk -n 3:0:0        -t 3:8200 $DISK  # swap
 
-# === 2. Partition Disk ===
-echo "🧹 Wiping disk and creating partitions"
-wipefs -a $disk
-parted $disk -- mklabel gpt
-parted $disk -- mkpart ESP fat32 1MiB 2049MiB
-parted $disk -- set 1 esp on
-parted $disk -- mkpart primary 2049MiB 100%
+mkfs.fat -F32 $EFI
+mkswap $SWAP
+swapon $SWAP
 
-# === 3. Format partitions ===
-echo "💽 Formatting EFI and preparing ZFS"
-mkfs.fat -F32 $part1
-modprobe zfs || (echo "ZFS kernel module not found!" && exit 1)
+# === REFLECTOR ===
+pacman -Sy --noconfirm reflector
+reflector --country "Ukraine,Poland,Moldova,Czech Republic,Hungary,Lithuania,Latvia,Slovenia,Slovakia,Romania,Bulgaria,Croatia,Serbia,South Korea,Singapore,Hong Kong,Switzerland,Denmark,Netherlands,Sweden,United Arab Emirates,Norway,Japan,Finland,Canada,Germany,United Kingdom,France,Belgium,Luxembourg,Israel,Spain,Estonia,Austria,Malaysia,Thailand,Portugal,Ireland,Italy,Australia,Greece,Chile,Uruguay,Qatar,Kuwait,Turkey,Brazil" \
+  --latest 24 --sort rate --protocol https --save /etc/pacman.d/mirrorlist
 
+# === CUSTOM GNOME INSTALL (no bloat) ===
+GNOME_PKGS=$(pacman -Sqg gnome | grep -Ev 'yelp|epiphany|totem|gnome-weather|gnome-maps|gnome-software|gnome-music|gnome-calendar|simple-scan|gnome-tour|malcontent|gnome-user-docs|decibels|gnome-contacts|gnome-characters|gnome-logs|gnome-clocks|gnome-photos|gnome-font-viewer|gnome-sound-recorder|gnome-boxes|gnome-remote-desktop|gnome-multi-writer|seahorse|rygel')
+
+# === BASE INSTALL ===
+pacstrap -K /mnt base base-devel linux-zen linux-zen-headers linux-firmware \
+  $GNOME_PKGS \
+  zsh zsh-completions sudo git curl efibootmgr ly networkmanager \
+  nvidia-dkms nvidia-utils rustup booster
+
+# === FSTAB ===
+genfstab -U /mnt >> /mnt/etc/fstab
+
+# === /etc/resolv.conf FIX ===
+echo -e "nameserver 1.1.1.1\nnameserver 9.9.9.9\nnameserver 8.8.8.8\noptions timeout:2 attempts:2 rotate" > /mnt/etc/resolv.conf
+
+# === CHROOT CONFIG ===
+arch-chroot /mnt bash -e <<EOF
+ln -sf /usr/share/zoneinfo/Europe/Kyiv /etc/localtime
+hwclock --systohc
+echo "en_US.UTF-8 UTF-8" >> /etc/locale.gen
+locale-gen
+echo "LANG=en_US.UTF-8" > /etc/locale.conf
+echo "$HOSTNAME" > /etc/hostname
+echo -e "127.0.0.1 localhost\n::1       localhost\n127.0.1.1 $HOSTNAME.localdomain $HOSTNAME" > /etc/hosts
+
+useradd -m -G wheel -s /bin/zsh $USERNAME
+echo "$USERNAME:$USERPASS" | chpasswd
+echo "root:$ROOTPASS" | chpasswd
+sed -i 's/# %wheel ALL=(ALL:ALL) ALL/%wheel ALL=(ALL:ALL) ALL/' /etc/sudoers
+chsh -s /bin/zsh $USERNAME
+
+systemctl enable NetworkManager
+systemctl enable ly
+EOF
+
+# === PARU & RUSTUP + minimal ZFS install from AUR ===
+arch-chroot /mnt bash -e <<EOF
+cd /home/$USERNAME
+git clone https://aur.archlinux.org/paru.git
+chown -R $USERNAME:$USERNAME paru
+cd paru
+sudo -u $USERNAME makepkg -sic --noconfirm
+
+sudo -u $USERNAME paru -Sy --noconfirm zfs-dkms zfs-utils
+
+rustup default stable
+EOF
+
+# Load ZFS kernel module for pool creation later
+modprobe zfs
+
+# === CREATE ZFS POOL with lz4 compression ===
 zpool create -f -o ashift=12 \
   -O compression=lz4 \
   -O atime=off \
   -O xattr=sa \
   -O acltype=posixacl \
+  -O relatime=on \
   -O mountpoint=none \
-  rpool $part2
+  -O canmount=off \
+  -O devices=off \
+  -m none \
+  rpool $ROOT
 
-zfs create -o mountpoint=/ rpool/ROOT
+zfs create -o mountpoint=legacy rpool/ROOT
 mount -t zfs rpool/ROOT /mnt
-mkdir -p /mnt/boot
-mount $part1 /mnt/boot
+mkdir /mnt/boot
+mount $EFI /mnt/boot
 
-# === 4. Install base system (no zfs yet) ===
-echo "📦 Installing base system and dependencies"
-pacstrap /mnt base base-devel linux-zen linux-zen-headers linux-firmware \
-          nvidia-dkms nvidia-utils networkmanager efibootmgr sudo zsh git rustup
+# === BOOTLOADER: EFISTUB via efibootmgr ===
+PARTUUID=$(blkid -s PARTUUID -o value $EFI)
+arch-chroot /mnt efibootmgr -c -d $DISK -p 1 \
+-L "$EFILABEL" \
+-l '\\vmlinuz-linux-zen' \
+-u "root=ZFS=rpool/ROOT rw initrd=\\booster-linux-zen.img resume=$SWAP quiet loglevel=0 mitigations=off noibrs noibpb nospec_store_bypass_disable l1tf=off pcie_aspm=off nvme_core.default_ps_max_latency_us=0 u.random.trust_cpu=on processor.max_cstate=1 nohz=on iommu=pt nvidia_drm.modeset=1 nvidia.NVreg_PreserveVideoMemoryAllocations=1 liburing.force_io_uring=1 zswap.enabled=0"
 
-genfstab -U /mnt >> /mnt/etc/fstab
-
-# === 5. Chroot to complete config ===
-echo "🔧 Chrooting for configuration"
-arch-chroot /mnt /bin/bash <<EOF
-
-ln -sf /usr/share/zoneinfo/Europe/Kyiv /etc/localtime
-hwclock --systohc
-
-sed -i '/^#en_US.UTF-8 UTF-8/s/^#//' /etc/locale.gen
-locale-gen
-echo LANG=en_US.UTF-8 > /etc/locale.conf
-echo archzfs > /etc/hostname
-
-# Initramfs
-sed -i 's/^MODULES=.*/MODULES=(zfs nvidia nvidia_modeset nvidia_uvm nvidia_drm)/' /etc/mkinitcpio.conf
-sed -i 's/^HOOKS=.*/HOOKS=(base udev autodetect modconf block zfs filesystems)/' /etc/mkinitcpio.conf
-mkinitcpio -P
-
-# EFISTUB boot entry
-efibootmgr --create \
-  --disk $disk \
-  --part 1 \
-  --label "Arch ZFS" \
-  --loader '\vmlinuz-linux-zen' \
-  --unicode "zfs=rpool/ROOT rw initrd=\\initramfs-linux-zen.img" \
-  --verbose
-
-# Set up user j
-useradd -m -G wheel -s /bin/zsh j
-echo "j:changeme" | chpasswd
-sed -i '/^# %wheel ALL=(ALL:ALL) ALL/s/^# //' /etc/sudoers
-
-# Enable services
-systemctl enable NetworkManager
-
-# Setup paru for ZFS AUR packages
-su - j -c 'rustup default stable'
-su - j -c 'rustup install stable'
-su - j -c 'git clone https://aur.archlinux.org/paru.git'
-su - j -c 'cd paru && makepkg -si --noconfirm'
-
-# Install ZFS via paru
-su - j -c 'paru -S --noconfirm zfs-dkms zfs-utils'
-
-# Install DE and audio
-pacman -S --noconfirm ly gnome gnome-tweaks \
-  pipewire pipewire-alsa pipewire-audio pipewire-jack pipewire-pulse wireplumber \
-  xorg xorg-xinit xorg-xwayland xdg-desktop-portal-gnome smartmontools
-
-systemctl enable ly
-
-EOF
-
-# === 6. Done ===
-echo "✅ Arch Linux with ZFS and Zen kernel installed"
-echo "💡 Reboot and login as user: j / password: changeme"
+echo "✅ Arch Linux Zen + NVIDIA + minimal ZFS + EFISTUB + Booster installed successfully."
+echo "🔑 User: $USERNAME / Pass: $USERPASS"
+echo "💡 Reboot, remove media, and enjoy Cerebro"
