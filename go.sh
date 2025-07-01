@@ -33,7 +33,7 @@ GRAPHICS_PKG=(nvidia-dkms nvidia-utils)
 
 echo "[1/12] Initialize pacman keyring and update system"
 pacman-key --init
-pacman -Syu --needed --noconfirm archlinux-keyring reflector
+pacman -S --noconfirm archlinux-keyring reflector
 
 echo "[2/12] Partitioning disk $DISK"
 # Check if partitions already exist
