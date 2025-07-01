@@ -14,14 +14,6 @@ USERPASS="arch"
 ROOTPASS="root"
 SWAP_SIZE="32G"         # ZFS swap zvol size
 
-MIRROR_COUNTRIES=(
-  "Ukraine" "Poland" "Moldova" "Czech Republic" "Hungary" "Lithuania" "Latvia" "Slovenia" "Slovakia"
-  "Romania" "Bulgaria" "Croatia" "Serbia" "South Korea" "Singapore" "Hong Kong" "Switzerland"
-  "Denmark" "Netherlands" "Sweden" "United Arab Emirates" "Norway" "Finland" "Germany"
-  "United Kingdom" "France" "Belgium" "Luxembourg" "Israel" "Spain" "Estonia"
-  "Portugal" "Ireland" "Italy" "Greece" "Qatar" "Kuwait" "Turkey" "Brazil"
-)
-
 ESSENTIALS=(
   base base-devel multilib-devel make devtools git podman fakechroot fakeroot
 )
@@ -36,13 +28,7 @@ GRAPHICS_PKG=(nvidia-dkms nvidia-utils)
 
 echo "[1/12] Initialize pacman keyring and update system"
 pacman-key --init
-pacman -Sy --needed --noconfirm archlinux-keyring reflector
-
-echo "[1.5/12] Updating mirrorlist with reflector"
-reflector --country "${MIRROR_COUNTRIES[*]}" --latest 16 --sort rate \
-  --protocol https --save /etc/pacman.d/mirrorlist
-
-pacman -Syu --needed --noconfirm
+pacman -Sy --needed --noconfirm archlinux-keyring
 
 echo "[2/12] Partitioning disk $DISK"
 if ! lsblk -n -o NAME "$DISK" | grep -q "${DISK##*/}p2"; then
@@ -191,8 +177,6 @@ RUSTFLAGS="-C target-cpu=native -C opt-level=3 \\
 DEBUG_RUSTFLAGS="-C debuginfo=2"
 CARGO_INCREMENTAL=0
 RUSTCFG
-
-pacman -Syu --needed --noconfirm
 
 EOF
 
