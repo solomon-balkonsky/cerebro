@@ -9,7 +9,7 @@ EOF
 
 # === User variables ===
 DISK="/dev/nvme0n1"
-EFI_SIZE="981"
+EFI_SIZE="981"        # EFI partition size in MiB
 HOSTNAME="cerebro"
 USERNAME="j"
 USERPASS="arch"
@@ -73,28 +73,14 @@ zfs create -V "${SWAP_SIZE}" \
 mkswap /dev/zvol/rpool/swap
 swapon /dev/zvol/rpool/swap
 
-echo "[9/12] Install paru AUR helper (build in /tmp, no raw disk mounts)"
-mkdir -p /tmp/paru-build
-export TMPDIR=/tmp/paru-build
-export PKGDEST=/tmp/paru-build
-export SRCDEST=/tmp/paru-build
-export PARU_CACHE_DIR=/tmp/paru-build/paru-cache
-
-cd /tmp/paru-build
-git clone https://aur.archlinux.org/paru.git
-cd paru
-makepkg -si --noconfirm
-cd /
-rm -rf /tmp/paru-build
-
-echo "[10/12] Installing base system and packages"
+echo "[9/12] Installing base system and packages"
 pacstrap /mnt "${ESSENTIALS[@]}"
 
-echo "[11/12] Generate fstab and add swap"
+echo "[10/12] Generating fstab and adding swap entry"
 genfstab -U /mnt > /mnt/etc/fstab
 echo '/dev/zvol/rpool/swap none swap defaults 0 0' >> /mnt/etc/fstab
 
-echo "[12/12] Configure resolv.conf"
+echo "[11/12] Configuring resolv.conf"
 cat > /mnt/etc/resolv.conf <<EOF
 nameserver 1.1.1.1
 nameserver 1.0.0.1
@@ -106,17 +92,21 @@ EOF
 echo "Copying install script for debugging"
 cp "$0" /mnt/root/arch_install_last_run.sh
 
-echo "Entering chroot to finalize install..."
+echo "[12/12] Entering chroot to finalize install..."
 arch-chroot /mnt /bin/bash <<EOF
 set -e
 
-# Install zfs-dkms and zfs-utils via paru inside chroot
-mkdir -p /tmp/build
-export TMPDIR=/tmp/build
-export PKGDEST=/tmp/build
-export SRCDEST=/tmp/build
-export PARU_CACHE_DIR=/tmp/build/paru-cache
+# Install paru inside chroot
+pacman -Sy --needed --noconfirm git base-devel
+mkdir -p /tmp/paru-build
+cd /tmp/paru-build
+git clone https://aur.archlinux.org/paru.git
+cd paru
+makepkg -si --noconfirm
+cd /
+rm -rf /tmp/paru-build
 
+# Install ZFS packages inside chroot using paru
 paru -Sy --needed --noconfirm zfs-dkms zfs-utils
 paru -Scc --noconfirm
 
@@ -130,29 +120,29 @@ echo LANG=en_US.UTF-8 > /etc/locale.conf
 # Hostname and hosts
 echo "${HOSTNAME}" > /etc/hostname
 cat <<HOSTS > /etc/hosts
-127.0.0.1   localhost
-::1         localhost
-127.0.1.1   ${HOSTNAME}.localdomain ${HOSTNAME}
+127.0.0.1 localhost
+::1       localhost
+127.0.1.1 ${HOSTNAME}.localdomain ${HOSTNAME}
 HOSTS
 
-# Create user
+# Create user and set passwords
 useradd -m -G wheel -s /bin/zsh "${USERNAME}"
 echo "${USERNAME}:${USERPASS}" | chpasswd
 echo "root:${ROOTPASS}" | chpasswd
 sed -i 's/^# %wheel ALL=(ALL:ALL) ALL/%wheel ALL=(ALL:ALL) ALL/' /etc/sudoers
 
-# Initramfs with Nvidia modules
+# Configure initramfs with NVIDIA modules
 sed -i 's/^MODULES=.*/MODULES=(nvidia nvidia_modeset nvidia_uvm nvidia_drm)/' /etc/mkinitcpio.conf
 sed -i 's/^HOOKS=.*/HOOKS=(base udev autodetect modconf block filesystems)/' /etc/mkinitcpio.conf
 mkinitcpio -P
 
-# EFISTUB boot entry
-efibootmgr --create --disk $DISK --part 1 --label "CerebroArch" --loader /vmlinuz-linux-zen --unicode "root=ZFS=rpool/ROOT/default rw" --verbose
+# Create EFISTUB boot entry
+efibootmgr --create --disk ${DISK} --part 1 --label "CerebroArch" --loader /vmlinuz-linux-zen --unicode "root=ZFS=rpool/ROOT/default rw" --verbose
 
-# Enable services
+# Enable essential services
 systemctl enable NetworkManager ly bluetooth zram-swap
 
-# ZRAM config
+# Configure ZRAM swap
 cat > /etc/systemd/zram-generator.conf <<ZRAMCFG
 [zram0]
 zram-size = ram / 2
