@@ -25,9 +25,6 @@ MIRROR_COUNTRIES=(
   "Portugal" "Ireland" "Italy" "Greece" "Qatar" "Kuwait" "Turkey" "Brazil"
 )
 
-# GNOME packages to exclude
-GNOME_EXCLUDES='yelp|epiphany|totem|gnome-weather|gnome-maps|gnome-software|gnome-music|gnome-calendar|simple-scan|gnome-tour|malcontent|gnome-user-docs|decibels|gdm|gnome-characters|gnome-photos|gnome-font-viewer|gnome-sound-recorder|gnome-remote-desktop|gnome-multi-writer|seahorse'
-
 # Base & custom stack
 ESSENTIALS=(
   base base-devel multilib-devel make devtools git podman fakechroot fakeroot
@@ -45,7 +42,6 @@ GRAPHICS_PKG=(nvidia-dkms nvidia-utils)
 
 echo "[1/12] Initializing pacman keyring"
 pacman-key --init
-
 pacman -Syu --needed --noconfirm archlinux-keyring reflector
 
 # Partitioning disk
@@ -68,9 +64,10 @@ zpool create -f -o ashift=12 \
   -O compression=lz4 -O atime=off -O xattr=sa \
   -O acltype=posixacl -O relatime=on -O mountpoint=none \
   -O canmount=off -O devices=off rpool \${DISK}p2
-zfs create rpool/ROOT
+zfs create -o mountpoint=none rpool/ROOT
 zfs create -o mountpoint=legacy rpool/ROOT/default
-zfs set bootfs=rpool/ROOT/default rpool
+zpool set bootfs=rpool/ROOT/default rpool
+
 mount -t zfs rpool/ROOT/default /mnt
 mkdir -p /mnt/boot
 mount \${DISK}p1 /mnt/boot
@@ -90,6 +87,10 @@ swapon /dev/zvol/rpool/swap
 echo "[7/12] Updating mirrorlist"
 reflector --country "\${MIRROR_COUNTRIES[*]}" --latest 16 --sort rate \
   --protocol https --save /etc/pacman.d/mirrorlist
+
+# Check free space just in case
+df -h /mnt
+zfs list
 
 # Install base system and full stack
 echo "[8/12] Installing system packages"
@@ -189,4 +190,4 @@ RUSTCFG
 pacman -Syu --needed --noconfirm
 EOF
 
-echo "[12/12] Cerebro Installation complete. Reboot & enjoy ;)"
+echo "[12/12] ✅ Cerebro Installation complete. Reboot & enjoy ;)"
