@@ -188,8 +188,6 @@ DEBUG_RUSTFLAGS="-C debuginfo=2"
 CARGO_INCREMENTAL=0
 RUSTCFG
 
-pacman -Syu --needed --noconfirm
-
 EOF
 
 echo "✅ Installation complete! Please reboot."
