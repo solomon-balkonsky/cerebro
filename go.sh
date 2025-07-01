@@ -106,7 +106,7 @@ arch-chroot /mnt /bin/bash <<EOF
 set -e
 
 # Install ZFS packages via paru
-paru -Sy --needed --noconfirm zfs-dkms zfs-utils
+paru -Sy --noconfirm zfs-dkms zfs-utils
 
 modprobe zfs
 
