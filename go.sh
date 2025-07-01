@@ -18,17 +18,24 @@ echo "[1/12] Initialize pacman keyring and update system"
 pacman-key --init
 pacman -Sy --needed --noconfirm archlinux-keyring reflector git base-devel
 
-echo "[2/12] Install paru"
-git clone https://aur.archlinux.org/paru.git /tmp/paru
-cd /tmp/paru
+echo "[2/12] Prepare temporary directory on NVMe for paru build"
+mkdir -p /mnt/tmp
+mount "${DISK}" /mnt
+mkdir -p /mnt/tmp/paru-build
+export TMPDIR=/mnt/tmp/paru-build
+
+echo "[3/12] Install paru"
+git clone https://aur.archlinux.org/paru.git /mnt/tmp/paru-build/paru
+cd /mnt/tmp/paru-build/paru
 makepkg -si --noconfirm
 cd /
-rm -rf /tmp/paru
+umount /mnt
+rm -rf /mnt/tmp
 
-echo "[3/12] Install ZFS packages via paru"
+echo "[4/12] Install ZFS packages via paru"
 paru -Sy --needed --noconfirm zfs-dkms zfs-utils
 
-echo "[4/12] Partitioning disk $DISK"
+echo "[5/12] Partitioning disk $DISK"
 if ! lsblk -n -o NAME "$DISK" | grep -q "${DISK##*/}p2"; then
   sgdisk -Z "$DISK"
   sgdisk -n 1:0:+${EFI_SIZE}MiB -t 1:ef00 "$DISK"
@@ -37,14 +44,14 @@ else
   echo "Partitions exist, skipping partitioning"
 fi
 
-echo "[5/12] Formatting EFI partition"
+echo "[6/12] Formatting EFI partition"
 mkfs.fat -F32 "${DISK}p1"
 
-echo "[6/12] Cleaning existing ZFS pool (if any)"
+echo "[7/12] Cleaning existing ZFS pool (if any)"
 zpool export rpool || true
 zpool destroy -f rpool || true
 
-echo "[7/12] Creating ZFS pool and datasets"
+echo "[8/12] Creating ZFS pool and datasets"
 zpool create -f -o ashift=12 \
   -O compression=lz4 -O atime=off -O xattr=sa \
   -O acltype=posixacl -O relatime=on -O mountpoint=none \
@@ -54,12 +61,12 @@ zfs create -o mountpoint=none rpool/ROOT
 zfs create -o mountpoint=legacy rpool/ROOT/default
 zpool set bootfs=rpool/ROOT/default rpool
 
-echo "[8/12] Mounting ZFS root"
+echo "[9/12] Mounting ZFS root"
 mount -t zfs rpool/ROOT/default /mnt
 mkdir -p /mnt/boot
 mount "${DISK}p1" /mnt/boot
 
-echo "[9/12] Creating ZFS swap zvol"
+echo "[10/12] Creating ZFS swap zvol"
 zfs create -V "${SWAP_SIZE}" \
   -b 4K -o compression=off \
   -o sync=always \
@@ -69,7 +76,7 @@ zfs create -V "${SWAP_SIZE}" \
 mkswap /dev/zvol/rpool/swap
 swapon /dev/zvol/rpool/swap
 
-echo "[10/12] Checking mount point"
+echo "[11/12] Checking mount point"
 if ! mountpoint -q /mnt; then
   echo "Error: /mnt is not mounted correctly! Aborting."
   exit 1
@@ -77,7 +84,7 @@ fi
 df -h /mnt
 zfs list
 
-echo "[11/12] Installing base system"
+echo "[12/12] Installing base system"
 pacstrap /mnt base base-devel linux-zen linux-zen-headers linux-firmware \
           nvidia-dkms nvidia-utils \
           networkmanager ly gnome gnome-tweaks zsh efibootmgr \
@@ -85,7 +92,7 @@ pacstrap /mnt base base-devel linux-zen linux-zen-headers linux-firmware \
           xorg xorg-xinit xorg-xwayland xdg-desktop-portal-gnome \
           smartmontools snapper sudo
 
-echo "[12/12] Generating fstab and swap entry"
+echo "Generating fstab and swap entry"
 genfstab -U /mnt > /mnt/etc/fstab
 echo '/dev/zvol/rpool/swap none swap defaults 0 0' >> /mnt/etc/fstab
 
@@ -106,7 +113,7 @@ arch-chroot /mnt /bin/bash <<EOF
 set -e
 
 # Install ZFS packages via paru
-paru -Sy --noconfirm zfs-dkms zfs-utils
+paru -Sy --needed --noconfirm zfs-dkms zfs-utils
 
 modprobe zfs
 
