@@ -1,5 +1,9 @@
 #!/bin/bash
 set -euo pipefail
+
+echo "🔧 Enabling NTP"
+timedatectl set-ntp true
+
 IFS=$'\n\t'
 
 # === User-configurable variables ===
