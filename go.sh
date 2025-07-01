@@ -13,7 +13,7 @@ ROOTPASS="root"
 # EFI partition size (in MiB)
 EFI_SIZE="981"
 
-# ZFS swap zvol size (e.g. 16G)
+# ZFS swap zvol size
 SWAP_SIZE="32G"
 
 # Mirror countries for reflector
