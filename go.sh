@@ -16,7 +16,7 @@ SWAP_SIZE="32G"
 
 echo "[1/12] Initialize pacman keyring and update system"
 pacman-key --init
-pacman -Sy --needed --noconfirm archlinux-keyring reflector git base-devel
+pacman -Sy --needed --noconfirm archlinux-keyring reflector git base-devel zfs-utils
 
 echo "[2/12] Install paru"
 git clone https://aur.archlinux.org/paru.git /tmp/paru
@@ -37,13 +37,11 @@ fi
 echo "[4/12] Formatting EFI partition"
 mkfs.fat -F32 "${DISK}p1"
 
-echo "[5/12] Skipping loading ZFS kernel module (will load after install inside chroot)"
-
-echo "[6/12] Cleaning existing ZFS pool (if any)"
+echo "[5/12] Cleaning existing ZFS pool (if any)"
 zpool export rpool || true
 zpool destroy -f rpool || true
 
-echo "[7/12] Creating ZFS pool and datasets"
+echo "[6/12] Creating ZFS pool and datasets"
 zpool create -f -o ashift=12 \
   -O compression=lz4 -O atime=off -O xattr=sa \
   -O acltype=posixacl -O relatime=on -O mountpoint=none \
@@ -53,12 +51,12 @@ zfs create -o mountpoint=none rpool/ROOT
 zfs create -o mountpoint=legacy rpool/ROOT/default
 zpool set bootfs=rpool/ROOT/default rpool
 
-echo "[8/12] Mounting ZFS root"
+echo "[7/12] Mounting ZFS root"
 mount -t zfs rpool/ROOT/default /mnt
 mkdir -p /mnt/boot
 mount "${DISK}p1" /mnt/boot
 
-echo "[9/12] Creating ZFS swap zvol"
+echo "[8/12] Creating ZFS swap zvol"
 zfs create -V "${SWAP_SIZE}" \
   -b 4K -o compression=off \
   -o sync=always \
@@ -68,7 +66,7 @@ zfs create -V "${SWAP_SIZE}" \
 mkswap /dev/zvol/rpool/swap
 swapon /dev/zvol/rpool/swap
 
-echo "[10/12] Checking mount point"
+echo "[9/12] Checking mount point"
 if ! mountpoint -q /mnt; then
   echo "Error: /mnt is not mounted correctly! Aborting."
   exit 1
@@ -76,19 +74,19 @@ fi
 df -h /mnt
 zfs list
 
-echo "[11/12] Installing base system"
+echo "[10/12] Installing base system"
 pacstrap /mnt base base-devel linux-zen linux-zen-headers linux-firmware \
           nvidia-dkms nvidia-utils \
           networkmanager ly gnome gnome-tweaks zsh efibootmgr \
           pipewire pipewire-alsa pipewire-audio pipewire-jack pipewire-pulse wireplumber \
           xorg xorg-xinit xorg-xwayland xdg-desktop-portal-gnome \
-          smartmontools snapper sudo
+          smartmontools snapper sudo zfs-utils
 
-echo "[12/12] Generating fstab and swap entry"
+echo "[11/12] Generating fstab and swap entry"
 genfstab -U /mnt > /mnt/etc/fstab
 echo '/dev/zvol/rpool/swap none swap defaults 0 0' >> /mnt/etc/fstab
 
-echo "Configuring resolv.conf"
+echo "[12/12] Configuring resolv.conf"
 cat > /mnt/etc/resolv.conf <<EOF
 nameserver 1.1.1.1
 nameserver 1.0.0.1
@@ -105,7 +103,7 @@ arch-chroot /mnt /bin/bash <<EOF
 set -e
 
 # Install ZFS packages via paru
-paru -Sy --needed --noconfirm zfs-dkms zfs-utils
+paru -Sy --needed --noconfirm zfs-dkms
 
 modprobe zfs
 
