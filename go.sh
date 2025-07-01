@@ -38,8 +38,7 @@ GRAPHICS_PKG=(nvidia-dkms nvidia-utils)
 
 echo "[1/12] Initialize pacman keyring and update system"
 pacman-key --init
-pacman -Sy --needed --noconfirm archlinux-keyring reflector
-pacman -Syu --needed --noconfirm
+pacman -Sy --noconfirm archlinux-keyring reflector
 
 echo "[2/12] Partitioning disk $DISK"
 if ! lsblk -n -o NAME "$DISK" | grep -q "${DISK##*/}p2"; then
