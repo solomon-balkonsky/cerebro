@@ -39,33 +39,24 @@ CUSTOM_PKG=(
 GRAPHICS_PKG=(nvidia-dkms nvidia-utils)
 
 # === Start installation ===
-
 echo "[1/12] Initializing pacman keyring"
 pacman-key --init
-pacman -Sy --noconfirm archlinux-keyring reflector
+pacman -Syu --needed --noconfirm archlinux-keyring reflector
 
-# Safety check: prevent running on live USB or booted device
-if mount | grep -q "$DISK"; then
-  echo "❌ ERROR: $DISK appears to be mounted. Refusing to overwrite live system."
-  lsblk -f
-  exit 1
+# Partitioning logic
+echo "[2/12] Checking partition table on $DISK"
+if ! lsblk -n -o NAME "$DISK" | grep -q "${DISK##*/}p2"; then
+  echo "[2/12] Partitioning $DISK"
+  sgdisk -Z "$DISK"
+  sgdisk -n 1:0:+${EFI_SIZE}MiB -t 1:ef00 "$DISK"
+  sgdisk -n 2:0:0 -t 2:bf00 "$DISK"
+else
+  echo "[2/12] Detected existing partitions, skipping partitioning"
 fi
-
-if grep -q "$DISK" /proc/mounts; then
-  echo "❌ ERROR: $DISK is currently in use."
-  lsblk -f
-  exit 1
-fi
-
-# Partitioning disk
-echo "[2/12] Partitioning $DISK"
-sgdisk -Z $DISK
-sgdisk -n 1:0:+\${EFI_SIZE}MiB -t 1:ef00 $DISK
-sgdisk -n 2:0:0 -t 2:bf00 $DISK
 
 # Formatting EFI partition
 echo "[3/12] Formatting EFI"
-mkfs.fat -F32 \${DISK}p1
+mkfs.fat -F32 ${DISK}p1
 
 # Load ZFS module
 echo "[4/12] Loading ZFS module"
@@ -76,18 +67,18 @@ echo "[5/12] Creating ZFS pool"
 zpool create -f -o ashift=12 \
   -O compression=lz4 -O atime=off -O xattr=sa \
   -O acltype=posixacl -O relatime=on -O mountpoint=none \
-  -O canmount=off -O devices=off rpool \${DISK}p2
+  -O canmount=off -O devices=off rpool ${DISK}p2
 zfs create -o mountpoint=none rpool/ROOT
 zfs create -o mountpoint=legacy rpool/ROOT/default
 zpool set bootfs=rpool/ROOT/default rpool
 
 mount -t zfs rpool/ROOT/default /mnt
 mkdir -p /mnt/boot
-mount \${DISK}p1 /mnt/boot
+mount ${DISK}p1 /mnt/boot
 
 # Create ZFS swap volume
 echo "[6/12] Creating ZFS swap zvol"
-zfs create -V \$SWAP_SIZE \
+zfs create -V $SWAP_SIZE \
   -b 4K -o compression=off \
   -o sync=always \
   -o primarycache=metadata \
@@ -98,7 +89,7 @@ swapon /dev/zvol/rpool/swap
 
 # Optimize mirrorlist
 echo "[7/12] Updating mirrorlist"
-reflector --country "\${MIRROR_COUNTRIES[*]}" --latest 16 --sort rate \
+reflector --country "${MIRROR_COUNTRIES[*]}" --latest 16 --sort rate \
   --protocol https --save /etc/pacman.d/mirrorlist
 
 # Check free space just in case
@@ -108,9 +99,9 @@ zfs list
 # Install base system and full stack
 echo "[8/12] Installing system packages"
 pacstrap -K /mnt \
-  "\${ESSENTIALS[@]}" \
-  "\${CUSTOM_PKG[@]}" \
-  "\${GRAPHICS_PKG[@]}"
+  "${ESSENTIALS[@]}" \
+  "${CUSTOM_PKG[@]}" \
+  "${GRAPHICS_PKG[@]}"
 
 # Generate fstab
 echo "[9/12] Generating fstab"
