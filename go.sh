@@ -2,32 +2,24 @@
 set -euo pipefail
 IFS=$'\n\t'
 
-# Minimal static mirrorlist for initial pacman use
+# Minimal static mirrorlist for initial package installs
 cat > /etc/pacman.d/mirrorlist <<EOF
 Server = https://mirror.rackspace.com/archlinux/\$repo/os/\$arch
 EOF
 
 # === User variables ===
 DISK="/dev/nvme0n1"
-EFI_SIZE="981"        # EFI partition size in MiB
+EFI_SIZE="981"
 HOSTNAME="cerebro"
 USERNAME="j"
 USERPASS="arch"
 ROOTPASS="root"
 SWAP_SIZE="32G"
 
-ESSENTIALS=(
-  base base-devel linux-zen linux-zen-headers linux-firmware
-  nvidia-dkms nvidia-utils
-  networkmanager ly gnome gnome-tweaks zsh efibootmgr
-  pipewire pipewire-alsa pipewire-audio pipewire-jack pipewire-pulse wireplumber
-  xorg xorg-xinit xorg-xwayland xdg-desktop-portal-gnome
-  smartmontools snapper sudo
-)
-
 echo "[1/12] Initialize pacman keyring and update system"
 pacman-key --init
-pacman -Sy --noconfirm archlinux-keyring git base-devel
+pacman -Sy --needed --noconfirm archlinux-keyring git base-devel
+pacman -Scc --noconfirm  # Clear pacman cache
 
 echo "[2/12] Partitioning disk $DISK"
 if ! lsblk -n -o NAME "$DISK" | grep -q "${DISK##*/}p2"; then
@@ -41,14 +33,14 @@ fi
 echo "[3/12] Formatting EFI partition"
 mkfs.fat -F32 "${DISK}p1"
 
-echo "[4/12] Load ZFS module"
+echo "[4/12] Loading ZFS kernel module"
 modprobe zfs || true
 
-echo "[5/12] Clean existing ZFS pool if present"
+echo "[5/12] Cleaning existing ZFS pool (if any)"
 zpool export rpool || true
 zpool destroy -f rpool || true
 
-echo "[6/12] Create ZFS pool and datasets"
+echo "[6/12] Creating ZFS pool and datasets"
 zpool create -f -o ashift=12 \
   -O compression=lz4 -O atime=off -O xattr=sa \
   -O acltype=posixacl -O relatime=on -O mountpoint=none \
@@ -58,12 +50,14 @@ zfs create -o mountpoint=none rpool/ROOT
 zfs create -o mountpoint=legacy rpool/ROOT/default
 zpool set bootfs=rpool/ROOT/default rpool
 
-echo "[7/12] Mount ZFS root dataset"
-mount -t zfs rpool/ROOT/default /mnt
+echo "[7/12] Mounting ZFS root and EFI"
+# Mount ZFS root dataset explicitly
+zfs mount rpool/ROOT/default
+
 mkdir -p /mnt/boot
 mount "${DISK}p1" /mnt/boot
 
-echo "[8/12] Create ZFS swap volume"
+echo "[8/12] Creating ZFS swap zvol"
 zfs create -V "${SWAP_SIZE}" \
   -b 4K -o compression=off \
   -o sync=always \
@@ -73,14 +67,30 @@ zfs create -V "${SWAP_SIZE}" \
 mkswap /dev/zvol/rpool/swap
 swapon /dev/zvol/rpool/swap
 
-echo "[9/12] Installing base system and packages"
-pacstrap /mnt "${ESSENTIALS[@]}"
+echo "[9/12] Checking mounts and free space"
+mount | grep /mnt
+df -h /mnt
+zfs list
 
-echo "[10/12] Generating fstab and adding swap entry"
+if ! mountpoint -q /mnt; then
+  echo "Error: /mnt is not properly mounted! Aborting."
+  exit 1
+fi
+
+echo "[10/12] Installing base system"
+pacstrap /mnt base base-devel linux-zen linux-zen-headers linux-firmware \
+          nvidia-dkms nvidia-utils \
+          networkmanager ly gnome gnome-tweaks zsh efibootmgr \
+          pipewire pipewire-alsa pipewire-audio pipewire-jack pipewire-pulse wireplumber \
+          xorg xorg-xinit xorg-xwayland xdg-desktop-portal-gnome \
+          smartmontools snapper sudo
+pacman -Scc --noconfirm  # Clear pacman cache
+
+echo "[11/12] Generating fstab and adding swap"
 genfstab -U /mnt > /mnt/etc/fstab
 echo '/dev/zvol/rpool/swap none swap defaults 0 0' >> /mnt/etc/fstab
 
-echo "[11/12] Configuring resolv.conf"
+echo "[12/12] Configuring resolv.conf"
 cat > /mnt/etc/resolv.conf <<EOF
 nameserver 1.1.1.1
 nameserver 1.0.0.1
@@ -92,57 +102,40 @@ EOF
 echo "Copying install script for debugging"
 cp "$0" /mnt/root/arch_install_last_run.sh
 
-echo "[12/12] Entering chroot to finalize install..."
+echo "Entering chroot to finalize install..."
 arch-chroot /mnt /bin/bash <<EOF
 set -e
 
-# Install paru inside chroot
-pacman -Sy --needed --noconfirm git base-devel
-mkdir -p /tmp/paru-build
-cd /tmp/paru-build
-git clone https://aur.archlinux.org/paru.git
-cd paru
-makepkg -si --noconfirm
-cd /
-rm -rf /tmp/paru-build
-
-# Install ZFS packages inside chroot using paru
-paru -Sy --needed --noconfirm zfs-dkms zfs-utils
-paru -Scc --noconfirm
-
-modprobe zfs
-
-# Configure locale
+# Locale and hostname
 sed -i 's/#en_US.UTF-8/en_US.UTF-8/' /etc/locale.gen
 locale-gen
 echo LANG=en_US.UTF-8 > /etc/locale.conf
 
-# Hostname and hosts
 echo "${HOSTNAME}" > /etc/hostname
 cat <<HOSTS > /etc/hosts
-127.0.0.1 localhost
-::1       localhost
-127.0.1.1 ${HOSTNAME}.localdomain ${HOSTNAME}
+127.0.0.1   localhost
+::1         localhost
+127.0.1.1   ${HOSTNAME}.localdomain ${HOSTNAME}
 HOSTS
 
-# Create user and set passwords
+# User setup
 useradd -m -G wheel -s /bin/zsh "${USERNAME}"
 echo "${USERNAME}:${USERPASS}" | chpasswd
 echo "root:${ROOTPASS}" | chpasswd
 sed -i 's/^# %wheel ALL=(ALL:ALL) ALL/%wheel ALL=(ALL:ALL) ALL/' /etc/sudoers
 
-# Configure initramfs with NVIDIA modules
+# Initramfs Nvidia modules
 sed -i 's/^MODULES=.*/MODULES=(nvidia nvidia_modeset nvidia_uvm nvidia_drm)/' /etc/mkinitcpio.conf
 sed -i 's/^HOOKS=.*/HOOKS=(base udev autodetect modconf block filesystems)/' /etc/mkinitcpio.conf
 mkinitcpio -P
 
-# Create EFISTUB boot entry
+# EFISTUB boot entry
 efibootmgr --create --disk ${DISK} --part 1 --label "CerebroArch" --loader /vmlinuz-linux-zen --unicode "root=ZFS=rpool/ROOT/default rw" --verbose
 
-# Enable essential services
+# Enable services
 systemctl enable NetworkManager ly bluetooth zram-swap
 
-# Configure ZRAM swap
+# Configure zram-generator
 cat > /etc/systemd/zram-generator.conf <<ZRAMCFG
 [zram0]
 zram-size = ram / 2
