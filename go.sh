@@ -55,8 +55,10 @@ zfs create -o mountpoint=none rpool/ROOT
 zfs create -o mountpoint=legacy rpool/ROOT/default
 zpool set bootfs=rpool/ROOT/default rpool
 
-echo "[7/12] Mounting ZFS root dataset"
-zfs mount rpool/ROOT/default
+echo "[7/12] Mounting ZFS root dataset explicitly at /mnt"
+umount -R /mnt || true
+mkdir -p /mnt
+mount -t zfs rpool/ROOT/default /mnt
 
 echo "[8/12] Mount EFI partition"
 mkdir -p /mnt/boot
