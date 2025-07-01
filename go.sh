@@ -17,6 +17,7 @@ SWAP_SIZE="32G"
 echo "[1/12] Initialize pacman keyring and update system"
 pacman-key --init
 pacman -Sy --needed --noconfirm archlinux-keyring reflector git base-devel
+pacman -Scc --noconfirm  # Clear pacman cache
 
 echo "[2/12] Prepare temporary directory on NVMe for builds"
 mkdir -p /mnt/tmp
@@ -25,6 +26,7 @@ mkdir -p /mnt/tmp/build
 export TMPDIR=/mnt/tmp/build
 export PKGDEST=/mnt/tmp/build
 export SRCDEST=/mnt/tmp/build
+export PARU_CACHE_DIR=/mnt/tmp/build/paru-cache
 
 echo "[3/12] Install paru"
 git clone https://aur.archlinux.org/paru.git /mnt/tmp/build/paru
@@ -32,10 +34,12 @@ cd /mnt/tmp/build/paru
 makepkg -si --noconfirm
 cd /
 rm -rf /mnt/tmp/build/paru
+paru -Scc --noconfirm  # Clear paru cache
 
 echo "[4/12] Install ZFS packages via paru"
 paru -Sy --needed --noconfirm zfs-dkms zfs-utils
 rm -rf /mnt/tmp/build/*
+paru -Scc --noconfirm  # Clear paru cache
 
 echo "[5/12] Partitioning disk $DISK"
 umount /mnt || true
@@ -94,6 +98,7 @@ pacstrap /mnt base base-devel linux-zen linux-zen-headers linux-firmware \
           pipewire pipewire-alsa pipewire-audio pipewire-jack pipewire-pulse wireplumber \
           xorg xorg-xinit xorg-xwayland xdg-desktop-portal-gnome \
           smartmontools snapper sudo
+pacman -Scc --noconfirm  # Clear pacman cache
 
 echo "Generating fstab and swap entry"
 genfstab -U /mnt > /mnt/etc/fstab
@@ -120,10 +125,12 @@ mkdir -p /tmp/build
 export TMPDIR=/tmp/build
 export PKGDEST=/tmp/build
 export SRCDEST=/tmp/build
+export PARU_CACHE_DIR=/tmp/build/paru-cache
 
 # Install ZFS packages via paru
 paru -Sy --needed --noconfirm zfs-dkms zfs-utils
 rm -rf /tmp/build/*
+paru -Scc --noconfirm  # Clear paru cache
 
 modprobe zfs
 
