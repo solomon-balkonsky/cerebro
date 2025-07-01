@@ -127,6 +127,9 @@ echo "${USERNAME}:${USERPASS}" | chpasswd
 echo "root:${ROOTPASS}" | chpasswd
 sed -i 's/^# %wheel ALL=(ALL:ALL) ALL/%wheel ALL=(ALL:ALL) ALL/' /etc/sudoers
 
+# Create EFISTUB boot entry
+efibootmgr --create --disk $DISK --part 1 --label "CerebroArch" --loader /vmlinuz-linux-zen --unicode "root=ZFS=rpool/ROOT/default rw" --verbose
+
 systemctl enable NetworkManager ly bluetooth zram-swap
 
 cat > /etc/systemd/zram-generator.conf <<ZRAMCFG
