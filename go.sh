@@ -2,17 +2,27 @@
 set -euo pipefail
 IFS=$'\n\t'
 
-# Quick minimal mirrorlist so pacman can update/install packages initially
-echo "Server = https://mirror.rackspace.com/archlinux/\$repo/os/\$arch" > /etc/pacman.d/mirrorlist
+# Minimal static mirrorlist for initial package installs
+cat > /etc/pacman.d/mirrorlist <<EOF
+Server = https://mirror.rackspace.com/archlinux/\$repo/os/\$arch
+EOF
 
 # === User variables ===
 DISK="/dev/nvme0n1"
-EFI_SIZE="981"          # EFI partition size in MiB
+EFI_SIZE="981"
 HOSTNAME="cerebro"
 USERNAME="j"
 USERPASS="arch"
 ROOTPASS="root"
-SWAP_SIZE="32G"         # ZFS swap zvol size
+SWAP_SIZE="32G"
+
+MIRROR_COUNTRIES=(
+  "Ukraine" "Poland" "Moldova" "Czech Republic" "Hungary" "Lithuania" "Latvia" "Slovenia" "Slovakia"
+  "Romania" "Bulgaria" "Croatia" "Serbia" "South Korea" "Singapore" "Hong Kong" "Switzerland"
+  "Denmark" "Netherlands" "Sweden" "United Arab Emirates" "Norway" "Finland" "Germany"
+  "United Kingdom" "France" "Belgium" "Luxembourg" "Israel" "Spain" "Estonia"
+  "Portugal" "Ireland" "Italy" "Greece" "Qatar" "Kuwait" "Turkey" "Brazil"
+)
 
 ESSENTIALS=(
   base base-devel multilib-devel make devtools git podman fakechroot fakeroot
@@ -28,7 +38,8 @@ GRAPHICS_PKG=(nvidia-dkms nvidia-utils)
 
 echo "[1/12] Initialize pacman keyring and update system"
 pacman-key --init
-pacman -Sy --needed --noconfirm archlinux-keyring
+pacman -Sy --needed --noconfirm archlinux-keyring reflector
+pacman -Syu --needed --noconfirm
 
 echo "[2/12] Partitioning disk $DISK"
 if ! lsblk -n -o NAME "$DISK" | grep -q "${DISK##*/}p2"; then
@@ -177,6 +188,8 @@ RUSTFLAGS="-C target-cpu=native -C opt-level=3 \\
 DEBUG_RUSTFLAGS="-C debuginfo=2"
 CARGO_INCREMENTAL=0
 RUSTCFG
+
+pacman -Syu --needed --noconfirm
 
 EOF
 
