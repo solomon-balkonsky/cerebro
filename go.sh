@@ -58,10 +58,10 @@ if grep -q "$DISK" /proc/mounts; then
 fi
 
 # Partitioning disk
-echo "[2/12] Partitioning \$DISK"
-sgdisk -Z \$DISK
-sgdisk -n 1:0:+\${EFI_SIZE}MiB -t 1:ef00 \$DISK
-sgdisk -n 2:0:0 -t 2:bf00 \$DISK
+echo "[2/12] Partitioning $DISK"
+sgdisk -Z $DISK
+sgdisk -n 1:0:+\${EFI_SIZE}MiB -t 1:ef00 $DISK
+sgdisk -n 2:0:0 -t 2:bf00 $DISK
 
 # Formatting EFI partition
 echo "[3/12] Formatting EFI"
