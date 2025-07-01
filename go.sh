@@ -25,8 +25,8 @@ makepkg -si --noconfirm
 cd /
 rm -rf /tmp/paru
 
-echo "[3/12] Install zfs-utils via paru"
-paru -Sy --needed --noconfirm zfs-utils
+echo "[3/12] Install ZFS packages via paru"
+paru -Sy --needed --noconfirm zfs-dkms zfs-utils
 
 echo "[4/12] Partitioning disk $DISK"
 if ! lsblk -n -o NAME "$DISK" | grep -q "${DISK##*/}p2"; then
