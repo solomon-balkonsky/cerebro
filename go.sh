@@ -62,8 +62,13 @@ mkfs.fat -F32 ${DISK}p1
 echo "[4/12] Loading ZFS module"
 modprobe zfs || true
 
+# Destroy existing pool if exists
+echo "[5/12] Ensuring clean ZFS pool"
+zpool export rpool || true
+zpool destroy -f rpool || true
+
 # Create ZFS pool and root dataset
-echo "[5/12] Creating ZFS pool"
+echo "[6/12] Creating ZFS pool"
 zpool create -f -o ashift=12 \
   -O compression=lz4 -O atime=off -O xattr=sa \
   -O acltype=posixacl -O relatime=on -O mountpoint=none \
@@ -77,7 +82,7 @@ mkdir -p /mnt/boot
 mount ${DISK}p1 /mnt/boot
 
 # Create ZFS swap volume
-echo "[6/12] Creating ZFS swap zvol"
+echo "[7/12] Creating ZFS swap zvol"
 zfs create -V $SWAP_SIZE \
   -b 4K -o compression=off \
   -o sync=always \
@@ -88,7 +93,7 @@ mkswap /dev/zvol/rpool/swap
 swapon /dev/zvol/rpool/swap
 
 # Optimize mirrorlist
-echo "[7/12] Updating mirrorlist"
+echo "[8/12] Updating mirrorlist"
 reflector --country "${MIRROR_COUNTRIES[*]}" --latest 16 --sort rate \
   --protocol https --save /etc/pacman.d/mirrorlist
 
@@ -97,19 +102,19 @@ df -h /mnt
 zfs list
 
 # Install base system and full stack
-echo "[8/12] Installing system packages"
+echo "[9/12] Installing system packages"
 pacstrap -K /mnt \
   "${ESSENTIALS[@]}" \
   "${CUSTOM_PKG[@]}" \
   "${GRAPHICS_PKG[@]}"
 
 # Generate fstab
-echo "[9/12] Generating fstab"
+echo "[10/12] Generating fstab"
 genfstab -U /mnt >> /mnt/etc/fstab
 echo '/dev/zvol/rpool/swap none swap defaults 0 0' >> /mnt/etc/fstab
 
 # Configure resolv.conf
-echo "[10/12] Configuring DNS"
+echo "[11/12] Configuring DNS"
 cat > /mnt/etc/resolv.conf <<EOF
 nameserver 1.1.1.1
 nameserver 1.0.0.1
@@ -122,7 +127,7 @@ EOF
 cp "$0" /mnt/root/arch_install_last_run.sh
 
 # Enter chroot and finalize system
-echo "[11/12] Entering chroot"
+echo "[12/12] Entering chroot"
 arch-chroot /mnt /bin/bash <<EOF
 set -e
 
@@ -194,4 +199,4 @@ RUSTCFG
 pacman -Syu --needed --noconfirm
 EOF
 
-echo "[12/12] ✅ Cerebro Installation complete. Reboot & enjoy ;)"
+echo "✅ Cerebro Installation complete. Reboot & enjoy ;)"
