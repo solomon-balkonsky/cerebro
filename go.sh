@@ -66,8 +66,9 @@ zpool create -f -o ashift=12 \
   -O compression=lz4 -O atime=off -O xattr=sa \
   -O acltype=posixacl -O relatime=on -O mountpoint=none \
   -O canmount=off -O devices=off rpool \${DISK}p2
-zfs create -o mountpoint=legacy rpool/ROOT
-mount -t zfs rpool/ROOT /mnt
+zfs create rpool/ROOT
+zfs create -o mountpoint=legacy rpool/ROOT/default
+mount -t zfs rpool/ROOT/default /mnt
 mkdir -p /mnt/boot
 mount \${DISK}p1 /mnt/boot
 
