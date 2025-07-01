@@ -16,14 +16,6 @@ USERPASS="arch"
 ROOTPASS="root"
 SWAP_SIZE="32G"
 
-MIRROR_COUNTRIES=(
-  "Ukraine" "Poland" "Moldova" "Czech Republic" "Hungary" "Lithuania" "Latvia" "Slovenia" "Slovakia"
-  "Romania" "Bulgaria" "Croatia" "Serbia" "South Korea" "Singapore" "Hong Kong" "Switzerland"
-  "Denmark" "Netherlands" "Sweden" "United Arab Emirates" "Norway" "Finland" "Germany"
-  "United Kingdom" "France" "Belgium" "Luxembourg" "Israel" "Spain" "Estonia"
-  "Portugal" "Ireland" "Italy" "Greece" "Qatar" "Kuwait" "Turkey" "Brazil"
-)
-
 ESSENTIALS=(
   base base-devel multilib-devel make devtools git podman fakechroot fakeroot
 )
@@ -36,9 +28,10 @@ CUSTOM_PKG=(
 )
 GRAPHICS_PKG=(nvidia-dkms nvidia-utils)
 
-echo "[1/12] Initialize pacman keyring and update system"
+echo "[1/12] Initialize pacman keyring and update system, install ZFS tools for live environment"
 pacman-key --init
-pacman -Sy --noconfirm archlinux-keyring reflector
+pacman -Sy --needed --noconfirm archlinux-keyring reflector zfs-dkms zfs-utils
+modprobe zfs || true
 
 echo "[2/12] Partitioning disk $DISK"
 if ! lsblk -n -o NAME "$DISK" | grep -q "${DISK##*/}p2"; then
@@ -187,6 +180,8 @@ RUSTFLAGS="-C target-cpu=native -C opt-level=3 \\
 DEBUG_RUSTFLAGS="-C debuginfo=2"
 CARGO_INCREMENTAL=0
 RUSTCFG
+
+pacman -Syu --needed --noconfirm
 
 EOF
 
