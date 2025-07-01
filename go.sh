@@ -18,24 +18,27 @@ echo "[1/12] Initialize pacman keyring and update system"
 pacman-key --init
 pacman -Sy --needed --noconfirm archlinux-keyring reflector git base-devel
 
-echo "[2/12] Prepare temporary directory on NVMe for paru build"
+echo "[2/12] Prepare temporary directory on NVMe for builds"
 mkdir -p /mnt/tmp
 mount "${DISK}" /mnt
-mkdir -p /mnt/tmp/paru-build
-export TMPDIR=/mnt/tmp/paru-build
+mkdir -p /mnt/tmp/build
+export TMPDIR=/mnt/tmp/build
+export PKGDEST=/mnt/tmp/build
+export SRCDEST=/mnt/tmp/build
 
 echo "[3/12] Install paru"
-git clone https://aur.archlinux.org/paru.git /mnt/tmp/paru-build/paru
-cd /mnt/tmp/paru-build/paru
+git clone https://aur.archlinux.org/paru.git /mnt/tmp/build/paru
+cd /mnt/tmp/build/paru
 makepkg -si --noconfirm
 cd /
-umount /mnt
-rm -rf /mnt/tmp
+rm -rf /mnt/tmp/build/paru
 
 echo "[4/12] Install ZFS packages via paru"
 paru -Sy --needed --noconfirm zfs-dkms zfs-utils
+rm -rf /mnt/tmp/build/*
 
 echo "[5/12] Partitioning disk $DISK"
+umount /mnt || true
 if ! lsblk -n -o NAME "$DISK" | grep -q "${DISK##*/}p2"; then
   sgdisk -Z "$DISK"
   sgdisk -n 1:0:+${EFI_SIZE}MiB -t 1:ef00 "$DISK"
@@ -112,8 +115,15 @@ echo "Entering chroot to finalize install..."
 arch-chroot /mnt /bin/bash <<EOF
 set -e
 
+# Set build directories for paru in chroot
+mkdir -p /tmp/build
+export TMPDIR=/tmp/build
+export PKGDEST=/tmp/build
+export SRCDEST=/tmp/build
+
 # Install ZFS packages via paru
 paru -Sy --needed --noconfirm zfs-dkms zfs-utils
+rm -rf /tmp/build/*
 
 modprobe zfs
 
