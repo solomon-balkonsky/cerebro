@@ -16,10 +16,15 @@ USERPASS="arch"
 ROOTPASS="root"
 SWAP_SIZE="32G"
 
+ESSENTIALS=(
+  base base-devel linux-zen linux-zen-headers linux-firmware nvidia-dkms nvidia-utils \
+  networkmanager ly gnome gnome-tweaks zsh efibootmgr pipewire pipewire-alsa pipewire-audio pipewire-jack pipewire-pulse wireplumber \
+  xorg xorg-xinit xorg-xwayland xdg-desktop-portal-gnome smartmontools snapper sudo
+)
+
 echo "[1/12] Initialize pacman keyring and update system"
 pacman-key --init
-pacman -Sy --needed --noconfirm archlinux-keyring git base-devel
-pacman -Scc --noconfirm  # Clear pacman cache
+pacman -Sy --needed --noconfirm archlinux-keyring reflector git base-devel
 
 echo "[2/12] Partitioning disk $DISK"
 if ! lsblk -n -o NAME "$DISK" | grep -q "${DISK##*/}p2"; then
@@ -50,14 +55,23 @@ zfs create -o mountpoint=none rpool/ROOT
 zfs create -o mountpoint=legacy rpool/ROOT/default
 zpool set bootfs=rpool/ROOT/default rpool
 
-echo "[7/12] Mounting ZFS root and EFI"
-# Mount ZFS root dataset explicitly
+echo "[7/12] Mounting ZFS root dataset"
 zfs mount rpool/ROOT/default
 
+echo "[8/12] Mount EFI partition"
 mkdir -p /mnt/boot
 mount "${DISK}p1" /mnt/boot
 
-echo "[8/12] Creating ZFS swap zvol"
+echo "[9/12] Verify mounts"
+mount | grep /mnt
+df -h /mnt
+
+if ! mountpoint -q /mnt; then
+  echo "Error: /mnt is not mounted! Aborting."
+  exit 1
+fi
+
+echo "[10/12] Creating ZFS swap zvol"
 zfs create -V "${SWAP_SIZE}" \
   -b 4K -o compression=off \
   -o sync=always \
@@ -67,30 +81,14 @@ zfs create -V "${SWAP_SIZE}" \
 mkswap /dev/zvol/rpool/swap
 swapon /dev/zvol/rpool/swap
 
-echo "[9/12] Checking mounts and free space"
-mount | grep /mnt
-df -h /mnt
-zfs list
+echo "[11/12] Installing base system and custom packages"
+pacstrap /mnt "${ESSENTIALS[@]}"
 
-if ! mountpoint -q /mnt; then
-  echo "Error: /mnt is not properly mounted! Aborting."
-  exit 1
-fi
-
-echo "[10/12] Installing base system"
-pacstrap /mnt base base-devel linux-zen linux-zen-headers linux-firmware \
-          nvidia-dkms nvidia-utils \
-          networkmanager ly gnome gnome-tweaks zsh efibootmgr \
-          pipewire pipewire-alsa pipewire-audio pipewire-jack pipewire-pulse wireplumber \
-          xorg xorg-xinit xorg-xwayland xdg-desktop-portal-gnome \
-          smartmontools snapper sudo
-pacman -Scc --noconfirm  # Clear pacman cache
-
-echo "[11/12] Generating fstab and adding swap"
+echo "[12/12] Generating fstab and swap entry"
 genfstab -U /mnt > /mnt/etc/fstab
 echo '/dev/zvol/rpool/swap none swap defaults 0 0' >> /mnt/etc/fstab
 
-echo "[12/12] Configuring resolv.conf"
+echo "Configuring resolv.conf"
 cat > /mnt/etc/resolv.conf <<EOF
 nameserver 1.1.1.1
 nameserver 1.0.0.1
@@ -106,11 +104,12 @@ echo "Entering chroot to finalize install..."
 arch-chroot /mnt /bin/bash <<EOF
 set -e
 
-# Locale and hostname
+# Configure locale
 sed -i 's/#en_US.UTF-8/en_US.UTF-8/' /etc/locale.gen
 locale-gen
 echo LANG=en_US.UTF-8 > /etc/locale.conf
 
+# Hostname and hosts
 echo "${HOSTNAME}" > /etc/hostname
 cat <<HOSTS > /etc/hosts
 127.0.0.1   localhost
@@ -118,24 +117,23 @@ cat <<HOSTS > /etc/hosts
 127.0.1.1   ${HOSTNAME}.localdomain ${HOSTNAME}
 HOSTS
 
-# User setup
+# Create user, set passwords
 useradd -m -G wheel -s /bin/zsh "${USERNAME}"
 echo "${USERNAME}:${USERPASS}" | chpasswd
 echo "root:${ROOTPASS}" | chpasswd
 sed -i 's/^# %wheel ALL=(ALL:ALL) ALL/%wheel ALL=(ALL:ALL) ALL/' /etc/sudoers
 
-# Initramfs Nvidia modules
+# Initramfs for Nvidia
 sed -i 's/^MODULES=.*/MODULES=(nvidia nvidia_modeset nvidia_uvm nvidia_drm)/' /etc/mkinitcpio.conf
 sed -i 's/^HOOKS=.*/HOOKS=(base udev autodetect modconf block filesystems)/' /etc/mkinitcpio.conf
 mkinitcpio -P
 
 # EFISTUB boot entry
-efibootmgr --create --disk ${DISK} --part 1 --label "CerebroArch" --loader /vmlinuz-linux-zen --unicode "root=ZFS=rpool/ROOT/default rw" --verbose
+efibootmgr --create --disk $DISK --part 1 --label "CerebroArch" --loader /vmlinuz-linux-zen --unicode "root=ZFS=rpool/ROOT/default rw" --verbose
 
 # Enable services
 systemctl enable NetworkManager ly bluetooth zram-swap
 
-# Configure zram-generator
 cat > /etc/systemd/zram-generator.conf <<ZRAMCFG
 [zram0]
 zram-size = ram / 2
