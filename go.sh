@@ -13,12 +13,12 @@ ROOTPASS="root"
 # EFI partition size (in MiB)
 EFI_SIZE="981"
 
-# ZFS swap zvol size
+# ZFS swap zvol size (e.g. 16G)
 SWAP_SIZE="32G"
 
 # Mirror countries for reflector
 MIRROR_COUNTRIES=(
-  "Ukraine" "Poland" "Moldova" "Czech Republic" "Hungary" "Lithuania""Latvia" "Slovenia" "Slovakia"
+  "Ukraine" "Poland" "Moldova" "Czech Republic" "Hungary" "Lithuania" "Latvia" "Slovenia" "Slovakia"
   "Romania" "Bulgaria" "Croatia" "Serbia" "South Korea" "Singapore" "Hong Kong" "Switzerland"
   "Denmark" "Netherlands" "Sweden" "United Arab Emirates" "Norway" "Finland" "Germany"
   "United Kingdom" "France" "Belgium" "Luxembourg" "Israel" "Spain" "Estonia"
@@ -39,40 +39,40 @@ GRAPHICS_PKG=(nvidia-dkms nvidia-utils)
 
 # === Start installation ===
 
-echo "[1/11] Initializing pacman keyring"
+echo "[1/12] Initializing pacman keyring"
 pacman-key --init
 
 # Refresh keyring and perform full system update
 pacman -Syu --needed --noconfirm archlinux-keyring reflector
 
 # Partitioning disk
-echo "[2/11] Partitioning \$DISK"
+echo "[2/12] Partitioning \$DISK"
 sgdisk -Z \$DISK
 sgdisk -n 1:0:+\${EFI_SIZE}MiB -t 1:ef00 \$DISK
 # Use remaining space for root
 sgdisk -n 2:0:0 -t 2:bf00 \$DISK
 
 # Formatting EFI partition
-echo "[3/11] Formatting EFI"
+echo "[3/12] Formatting EFI"
 mkfs.fat -F32 \${DISK}p1
 
 # Load ZFS module
-echo "[4/11] Loading ZFS module"
+echo "[4/12] Loading ZFS module"
 modprobe zfs || true
 
 # Create ZFS pool and root filesystem
-echo "[5/11] Creating ZFS pool"
+echo "[5/12] Creating ZFS pool"
 zpool create -f -o ashift=12 \
   -O compression=lz4 -O atime=off -O xattr=sa \
   -O acltype=posixacl -O relatime=on -O mountpoint=none \
-  -O canmount=off -O devices=off rpool \$DISK"p2
+  -O canmount=off -O devices=off rpool \${DISK}p2
 zfs create -o mountpoint=legacy rpool/ROOT
 mount -t zfs rpool/ROOT /mnt
 mkdir -p /mnt/boot
 mount \${DISK}p1 /mnt/boot
 
 # Create ZFS swap volume
-echo "[6/11] Creating ZFS swap zvol"
+echo "[6/12] Creating ZFS swap zvol"
 zfs create -V \$SWAP_SIZE \
   -b 4K -o compression=off \
   -o sync=always \
@@ -83,12 +83,12 @@ mkswap /dev/zvol/rpool/swap
 swapon /dev/zvol/rpool/swap
 
 # Optimize mirrorlist
-echo "[7/11] Updating mirrorlist via reflector"
+echo "[7/12] Updating mirrorlist via reflector"
 reflector --country "\${MIRROR_COUNTRIES[*]}" --latest 16 --sort rate \
   --protocol https --save /etc/pacman.d/mirrorlist
 
 # Install base system and custom stack
-echo "[8/11] Installing base and custom packages"
+echo "[8/12] Installing base and custom packages"
 GNOME_PKGS=$(pacman -Sqg gnome | grep -Ev "$GNOME_EXCLUDES")
 pacstrap -K /mnt \
   "\${ESSENTIALS[@]}" \
@@ -96,13 +96,13 @@ pacstrap -K /mnt \
   "\${GRAPHICS_PKG[@]}"
 
 # Generate fstab
-echo "[9/11] Generating fstab"
+echo "[9/12] Generating fstab"
 genfstab -U /mnt >> /mnt/etc/fstab
 # swap zvol entry
 echo '/dev/zvol/rpool/swap none swap defaults 0 0' >> /mnt/etc/fstab
 
 # Configure resolv.conf
-echo "[10/11] Configuring DNS"
+echo "[10/12] Configuring DNS"
 cat > /mnt/etc/resolv.conf <<EOF
 nameserver 1.1.1.1
 nameserver 1.0.0.1
@@ -111,8 +111,14 @@ nameserver 9.9.9.9
 options timeout:2 attempts:2 rotate
 EOF
 
+# Copy this script for debugging later (optional)
+cp "$0" /mnt/root/arch_install_last_run.sh
+
 # Chroot and final configuration
-cat << 'EOF' | arch-chroot /mnt /bin/bash -e
+echo "[11/12] Entering chroot for system configuration"
+arch-chroot /mnt /bin/bash <<EOF
+set -e
+
 # Locale & hostname
 sed -i 's/#en_US.UTF-8/en_US.UTF-8/' /etc/locale.gen
 locale-gen
@@ -185,9 +191,8 @@ DEBUG_RUSTFLAGS="-C debuginfo=2"
 CARGO_INCREMENTAL=0
 RUSTCFG
 
-# Final keyring & update
-pacman-key --init
+# Final update
 pacman -Syu --needed --noconfirm
 EOF
 
-echo "[11/11] Cerebro Installation complete. Reboot & enjoy ;)"
+echo "[12/12] Cerebro Installation complete. Reboot & enjoy ;)"
