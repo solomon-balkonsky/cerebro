@@ -17,7 +17,6 @@ SWAP_SIZE="32G"
 echo "[1/12] Initialize pacman keyring and update system"
 pacman-key --init
 pacman -Sy --needed --noconfirm archlinux-keyring reflector
-modprobe zfs || true
 
 echo "[2/12] Partitioning disk $DISK"
 if ! lsblk -n -o NAME "$DISK" | grep -q "${DISK##*/}p2"; then
@@ -31,8 +30,7 @@ fi
 echo "[3/12] Formatting EFI partition"
 mkfs.fat -F32 "${DISK}p1"
 
-echo "[4/12] Loading ZFS kernel module"
-modprobe zfs || true
+echo "[4/12] Skipping loading ZFS kernel module (will load after install inside chroot)"
 
 echo "[5/12] Cleaning existing ZFS pool (if any)"
 zpool export rpool || true
