@@ -44,6 +44,19 @@ echo "[1/12] Initializing pacman keyring"
 pacman-key --init
 pacman -Sy --noconfirm archlinux-keyring reflector
 
+# Safety check: prevent running on live USB or booted device
+if mount | grep -q "$DISK"; then
+  echo "❌ ERROR: $DISK appears to be mounted. Refusing to overwrite live system."
+  lsblk -f
+  exit 1
+fi
+
+if grep -q "$DISK" /proc/mounts; then
+  echo "❌ ERROR: $DISK is currently in use."
+  lsblk -f
+  exit 1
+fi
+
 # Partitioning disk
 echo "[2/12] Partitioning \$DISK"
 sgdisk -Z \$DISK
