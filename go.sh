@@ -97,7 +97,12 @@ echo "[8/12] Updating mirrorlist"
 reflector --country "${MIRROR_COUNTRIES[*]}" --latest 16 --sort rate \
   --protocol https --save /etc/pacman.d/mirrorlist
 
-# Check free space just in case
+# Check mounts before pacstrap
+echo "[8.5/12] Checking /mnt mountpoint"
+if ! mountpoint -q /mnt; then
+  echo "❌ ERROR: /mnt is NOT mounted. Aborting install."
+  exit 1
+fi
 df -h /mnt
 zfs list
 
@@ -189,10 +194,10 @@ PARUCFG
 
 mkdir -p /etc/makepkg.conf.d
 cat > /etc/makepkg.conf.d/rust.conf <<RUSTCFG
-RUSTFLAGS="-C target-cpu=native -C opt-level=3 \
-  -C link-arg=-fuse-ld=mold -C strip=symbols \
-  -C force-frame-pointers=yes"
-DEBUG_RUSTFLAGS="-C debuginfo=2"
+RUSTFLAGS=\"-C target-cpu=native -C opt-level=3 \\
+  -C link-arg=-fuse-ld=mold -C strip=symbols \\
+  -C force-frame-pointers=yes\"
+DEBUG_RUSTFLAGS=\"-C debuginfo=2\"
 CARGO_INCREMENTAL=0
 RUSTCFG
 
