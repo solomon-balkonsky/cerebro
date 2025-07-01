@@ -10,20 +10,19 @@ USERNAME="j"
 USERPASS="arch"
 ROOTPASS="root"
 
-# Partition sizes (in MiB)
-EFI_SIZE="1981"
-ROOT_SIZE="429496"
+# EFI partition size (in MiB)
+EFI_SIZE="981"
+
+# ZFS swap zvol size (e.g. 16G)
+SWAP_SIZE="32G"
 
 # Mirror countries for reflector
 MIRROR_COUNTRIES=(
-  "Ukraine" "Poland" "Moldova" "Czech Republic" "Hungary" "Lithuania"
-  "Latvia" "Slovenia" "Slovakia" "Romania" "Bulgaria" "Croatia" "Serbia"
-  "South Korea" "Singapore" "Hong Kong" "Switzerland" "Denmark" "Netherlands"
-  "Sweden" "United Arab Emirates" "Norway" "Japan" "Finland" "Canada"
-  "Germany" "United Kingdom" "France" "Belgium" "Luxembourg" "Israel"
-  "Spain" "Estonia" "Austria" "Malaysia" "Thailand" "Portugal" "Ireland"
-  "Italy" "Australia" "Greece" "Chile" "Uruguay" "Qatar" "Kuwait" "Turkey"
-  "Brazil"
+  "Ukraine" "Poland" "Moldova" "Czech Republic" "Hungary" "Lithuania""Latvia" "Slovenia" "Slovakia"
+  "Romania" "Bulgaria" "Croatia" "Serbia" "South Korea" "Singapore" "Hong Kong" "Switzerland"
+  "Denmark" "Netherlands" "Sweden" "United Arab Emirates" "Norway" "Finland" "Germany"
+  "United Kingdom" "France" "Belgium" "Luxembourg" "Israel" "Spain" "Estonia"
+  "Portugal" "Ireland" "Italy" "Greece" "Qatar" "Kuwait" "Turkey" "Brazil"
 )
 
 # GNOME packages to exclude
@@ -34,37 +33,35 @@ ESSENTIALS=(
   base base-devel multilib-devel make devtools git podman fakechroot fakeroot
 )
 CUSTOM_PKG=(
-  linux-zen linux-zen-headers zfs-dkms zfs-utils efibootmgr ly networkmanager gnome gnome-extra zsh zsh-completions paru rustup booster mold ninja
+  linux-zen linux-zen-headers zfs-dkms zfs-utils efibootmgr ly networkmanager gnome gnome-extra zsh zsh-completions paru rustup booster mold ninja zram-generator
 )
 GRAPHICS_PKG=(nvidia-dkms nvidia-utils)
 
 # === Start installation ===
 
-echo "[1/10] Initializing pacman keyring"
+echo "[1/11] Initializing pacman keyring"
 pacman-key --init
 
 # Refresh keyring and perform full system update
 pacman -Syu --needed --noconfirm archlinux-keyring reflector
 
 # Partitioning disk
-echo "[2/10] Partitioning \$DISK"
+echo "[2/11] Partitioning \$DISK"
 sgdisk -Z \$DISK
 sgdisk -n 1:0:+\${EFI_SIZE}MiB -t 1:ef00 \$DISK
-sgdisk -n 2:0:+\${ROOT_SIZE}MiB -t 2:bf00 \$DISK
-sgdisk -n 3:0:0 -t 3:8200 \$DISK
+# Use remaining space for root
+sgdisk -n 2:0:0 -t 2:bf00 \$DISK
 
-# Formatting partitions
-echo "[3/10] Formatting partitions"
+# Formatting EFI partition
+echo "[3/11] Formatting EFI"
 mkfs.fat -F32 \${DISK}p1
-mkswap \${DISK}p3
-swapon \${DISK}p3
 
 # Load ZFS module
-echo "[4/10] Loading ZFS module"
+echo "[4/11] Loading ZFS module"
 modprobe zfs || true
 
-# Create ZFS pool and mount
-echo "[5/10] Creating ZFS pool"
+# Create ZFS pool and root filesystem
+echo "[5/11] Creating ZFS pool"
 zpool create -f -o ashift=12 \
   -O compression=lz4 -O atime=off -O xattr=sa \
   -O acltype=posixacl -O relatime=on -O mountpoint=none \
@@ -74,13 +71,24 @@ mount -t zfs rpool/ROOT /mnt
 mkdir -p /mnt/boot
 mount \${DISK}p1 /mnt/boot
 
+# Create ZFS swap volume
+echo "[6/11] Creating ZFS swap zvol"
+zfs create -V \$SWAP_SIZE \
+  -b 4K -o compression=off \
+  -o sync=always \
+  -o primarycache=metadata \
+  -o secondarycache=none \
+  rpool/swap
+mkswap /dev/zvol/rpool/swap
+swapon /dev/zvol/rpool/swap
+
 # Optimize mirrorlist
-echo "[6/10] Updating mirrorlist via reflector"
+echo "[7/11] Updating mirrorlist via reflector"
 reflector --country "\${MIRROR_COUNTRIES[*]}" --latest 16 --sort rate \
   --protocol https --save /etc/pacman.d/mirrorlist
 
 # Install base system and custom stack
-echo "[7/10] Installing base and custom packages"
+echo "[8/11] Installing base and custom packages"
 GNOME_PKGS=$(pacman -Sqg gnome | grep -Ev "$GNOME_EXCLUDES")
 pacstrap -K /mnt \
   "\${ESSENTIALS[@]}" \
@@ -88,11 +96,13 @@ pacstrap -K /mnt \
   "\${GRAPHICS_PKG[@]}"
 
 # Generate fstab
-echo "[8/10] Generating fstab"
+echo "[9/11] Generating fstab"
 genfstab -U /mnt >> /mnt/etc/fstab
+# swap zvol entry
+echo '/dev/zvol/rpool/swap none swap defaults 0 0' >> /mnt/etc/fstab
 
 # Configure resolv.conf
-echo "[9/10] Configuring DNS"
+echo "[10/11] Configuring DNS"
 cat > /mnt/etc/resolv.conf <<EOF
 nameserver 1.1.1.1
 nameserver 1.0.0.1
@@ -120,7 +130,15 @@ echo "root:$ROOTPASS" | chpasswd
 sed -i 's/^# %wheel ALL=(ALL:ALL) ALL/%wheel ALL=(ALL:ALL) ALL/' /etc/sudoers
 
 # Enable services
-systemctl enable NetworkManager ly bluetooth
+systemctl enable NetworkManager ly bluetooth zram-swap
+
+# Zram config
+cat > /etc/systemd/zram-generator.conf <<ZRAMCFG
+[zram0]
+zram-size = ram / 2
+compression-algorithm = lz4
+swap-priority = 100
+ZRAMCFG
 
 # Pacman config overrides
 cat > /etc/pacman.conf <<PACMANCFG
@@ -167,9 +185,9 @@ DEBUG_RUSTFLAGS="-C debuginfo=2"
 CARGO_INCREMENTAL=0
 RUSTCFG
 
-# Initialize pacman keyring & full update
+# Final keyring & update
 pacman-key --init
 pacman -Syu --needed --noconfirm
 EOF
 
-echo "[10/10] Cerebro installation complete. Reboot & enjoy ;) "
+echo "[11/11] Cerebro Installation complete. Reboot & enjoy ;)"
