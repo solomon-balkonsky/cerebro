@@ -2,6 +2,9 @@
 set -euo pipefail
 IFS=$'\n\t'
 
+# Quick minimal mirrorlist so pacman can update/install packages initially
+echo "Server = https://mirror.rackspace.com/archlinux/\$repo/os/\$arch" > /etc/pacman.d/mirrorlist
+
 # === User variables ===
 DISK="/dev/nvme0n1"
 EFI_SIZE="981"          # EFI partition size in MiB
@@ -33,12 +36,17 @@ GRAPHICS_PKG=(nvidia-dkms nvidia-utils)
 
 echo "[1/12] Initialize pacman keyring and update system"
 pacman-key --init
-pacman -Sy --noconfirm archlinux-keyring reflector
+pacman -Sy --needed --noconfirm archlinux-keyring reflector
+
+echo "[1.5/12] Updating mirrorlist with reflector"
+reflector --country "${MIRROR_COUNTRIES[*]}" --latest 16 --sort rate \
+  --protocol https --save /etc/pacman.d/mirrorlist
+
+pacman -Syu --needed --noconfirm
 
 echo "[2/12] Partitioning disk $DISK"
-# Check if partitions already exist
 if ! lsblk -n -o NAME "$DISK" | grep -q "${DISK##*/}p2"; then
-  sgdisk -Z "$DISK"       # Zap all on disk
+  sgdisk -Z "$DISK"
   sgdisk -n 1:0:+${EFI_SIZE}MiB -t 1:ef00 "$DISK"
   sgdisk -n 2:0:0 -t 2:bf00 "$DISK"
 else
@@ -80,11 +88,7 @@ zfs create -V "${SWAP_SIZE}" \
 mkswap /dev/zvol/rpool/swap
 swapon /dev/zvol/rpool/swap
 
-echo "[9/12] Updating mirrorlist"
-reflector --country "${MIRROR_COUNTRIES[*]}" --latest 16 --sort rate \
-  --protocol https --save /etc/pacman.d/mirrorlist
-
-echo "[9.5/12] Checking mount point"
+echo "[9/12] Checking mount point"
 if ! mountpoint -q /mnt; then
   echo "Error: /mnt is not mounted correctly! Aborting."
   exit 1
@@ -118,12 +122,10 @@ echo "Entering chroot to finalize install..."
 arch-chroot /mnt /bin/bash <<EOF
 set -e
 
-# Locale
 sed -i 's/#en_US.UTF-8/en_US.UTF-8/' /etc/locale.gen
 locale-gen
 echo LANG=en_US.UTF-8 > /etc/locale.conf
 
-# Hostname and hosts file
 echo "${HOSTNAME}" > /etc/hostname
 cat <<HOSTS > /etc/hosts
 127.0.0.1   localhost
@@ -131,16 +133,13 @@ cat <<HOSTS > /etc/hosts
 127.0.1.1   ${HOSTNAME}.localdomain ${HOSTNAME}
 HOSTS
 
-# User setup
 useradd -m -G wheel -s /bin/zsh "${USERNAME}"
 echo "${USERNAME}:${USERPASS}" | chpasswd
 echo "root:${ROOTPASS}" | chpasswd
 sed -i 's/^# %wheel ALL=(ALL:ALL) ALL/%wheel ALL=(ALL:ALL) ALL/' /etc/sudoers
 
-# Enable essential services
 systemctl enable NetworkManager ly bluetooth zram-swap
 
-# Configure zram
 cat > /etc/systemd/zram-generator.conf <<ZRAMCFG
 [zram0]
 zram-size = ram / 2
@@ -148,7 +147,6 @@ compression-algorithm = lz4
 swap-priority = 100
 ZRAMCFG
 
-# pacman configuration
 cat > /etc/pacman.conf <<PACMANCFG
 [options]
 HoldPkg = pacman glibc
@@ -169,7 +167,6 @@ Include = /etc/pacman.d/mirrorlist
 Include = /etc/pacman.d/mirrorlist
 PACMANCFG
 
-# paru configuration
 cat > /etc/paru.conf <<PARUCFG
 [options]
 PgpFetch
@@ -186,7 +183,6 @@ CleanAfter
 UpgradeMenu
 PARUCFG
 
-# Rust build optimization
 mkdir -p /etc/makepkg.conf.d
 cat > /etc/makepkg.conf.d/rust.conf <<RUSTCFG
 RUSTFLAGS="-C target-cpu=native -C opt-level=3 \\
@@ -195,6 +191,9 @@ RUSTFLAGS="-C target-cpu=native -C opt-level=3 \\
 DEBUG_RUSTFLAGS="-C debuginfo=2"
 CARGO_INCREMENTAL=0
 RUSTCFG
+
+pacman -Syu --needed --noconfirm
+
 EOF
 
 echo "✅ Installation complete! Please reboot."
